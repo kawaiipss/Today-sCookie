@@ -43,3 +43,24 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
+
+# Signing
+/android/key.properties
+*.jks
+*.keystore
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+lib/firebase_options.dart
+.env
+functions/.env
+functions/.runtimeconfig.json
+functions/env
+
+# Firebase Functions dependencies (npm install 결과물)
+functions/node_modules/
+
+# Obfuscation debug info (flutter build --split-debug-info 결과물)
+build/debug-info/
