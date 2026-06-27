@@ -78,6 +78,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _init() async {
     final result = await FortuneService.getTodayFortune();
+    if (result == null) {
+      await FortuneService.ensureAnonymousAuth();
+    }
     if (!mounted) return;
     setState(() {
       _fortune = result?.fortune;
@@ -85,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen>
       _isLoading = false;
     });
     if (result == null) {
-      FortuneService.ensureAnonymousAuth(); // 광고 로드와 병렬로 사전 인증
       _adService.loadAd();
     } else {
       _loadBannerAd();

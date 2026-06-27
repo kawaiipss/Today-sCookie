@@ -1,4 +1,4 @@
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -8,7 +8,6 @@ initializeApp();
 
 const claudeApiKey = defineSecret("CLAUDE_API_KEY");
 
-// KST(UTC+9) 기준 오늘 날짜 키 — 한국 유저의 자정 기준과 일치
 function getTodayKey() {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const y = kst.getUTCFullYear();
@@ -17,34 +16,41 @@ function getTodayKey() {
   return `${y}${m}${d}`;
 }
 
-exports.getDailyFortune = onCall(
-  { region: "asia-northeast3", secrets: [claudeApiKey] },
-  async (request) => {
-    if (!request.auth) {
-      throw new HttpsError("unauthenticated", "인증이 필요합니다.");
+exports.getDailyFortune = onRequest(
+  { region: "asia-northeast3", secrets: [claudeApiKey], invoker: "public" },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).send("Method Not Allowed");
     }
 
-    const uid = request.auth.uid;
-    const dateKey = getTodayKey();
-    const db = getFirestore();
-    const docRef = db.collection("dailyFortunes").doc(`${uid}_${dateKey}`);
-
-    // 오늘 이미 생성된 운세가 있으면 캐시 반환 (하루 1회 제한)
-    const doc = await docRef.get();
-    if (doc.exists) {
-      return { fortune: doc.data().fortune, cached: true };
+    const uid = req.body?.uid;
+    if (!uid) {
+      return res.status(400).json({ error: "UID required" });
     }
 
-    const fortune = await callClaude(claudeApiKey.value(), dateKey);
+    try {
+      const dateKey = getTodayKey();
+      const db = getFirestore();
+      const docRef = db.collection("dailyFortunes").doc(`${uid}_${dateKey}`);
 
-    await docRef.set({
-      uid,
-      date: dateKey,
-      fortune,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+      const doc = await docRef.get();
+      if (doc.exists) {
+        return res.json({ fortune: doc.data().fortune, cached: true });
+      }
 
-    return { fortune, cached: false };
+      const fortune = await callClaude(claudeApiKey.value().trim(), dateKey);
+      await docRef.set({
+        uid,
+        date: dateKey,
+        fortune,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      return res.json({ fortune, cached: false });
+    } catch (e) {
+      console.error("getDailyFortune error:", e);
+      return res.status(500).json({ error: "Internal error" });
+    }
   }
 );
 
@@ -86,19 +92,18 @@ async function callClaude(apiKey, dateKey) {
           try {
             const parsed = JSON.parse(data);
             if (res.statusCode !== 200) {
-              reject(new HttpsError("internal", `Claude API error: ${res.statusCode}`));
+              console.error(`Claude API ${res.statusCode}:`, data);
+              reject(new Error(`Claude API error: ${res.statusCode}`));
               return;
             }
             resolve(parsed.content[0].text.trim());
           } catch (_) {
-            reject(new HttpsError("internal", "Failed to parse Claude response"));
+            reject(new Error("Failed to parse Claude response"));
           }
         });
       }
     );
-    req.on("error", (e) =>
-      reject(new HttpsError("internal", `Network error: ${e.message}`))
-    );
+    req.on("error", (e) => reject(new Error(`Network error: ${e.message}`)));
     req.write(body);
     req.end();
   });

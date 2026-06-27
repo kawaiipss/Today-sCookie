@@ -1,11 +1,12 @@
-import 'package:cloud_functions/cloud_functions.dart';
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_strings.dart';
 
 class FortuneResult {
   final String fortune;
-  final bool cached; // true = 오늘 이미 서버에서 생성된 운세
+  final bool cached;
 
   const FortuneResult({required this.fortune, required this.cached});
 }
@@ -13,6 +14,8 @@ class FortuneResult {
 class FortuneService {
   static const _keyDate = 'fortune_date';
   static const _keyFortune = 'fortune_text';
+  static const _functionUrl =
+      'https://getdailyfortune-fha376a6xa-du.a.run.app';
 
   static String _todayKey() {
     final now = DateTime.now();
@@ -30,13 +33,15 @@ class FortuneService {
 
   static Future<FortuneResult> pickAndSaveFortune() async {
     final result = await _callDailyFortune();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyDate, _todayKey());
-    await prefs.setString(_keyFortune, result.fortune);
+    // fallback 문구는 캐시하지 않음 — 다음 탭 시 재시도 가능
+    if (result.fortune != AppStrings.fortuneFallback) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyDate, _todayKey());
+      await prefs.setString(_keyFortune, result.fortune);
+    }
     return result;
   }
 
-  // home_screen의 _init()에서 광고 로드와 병렬로 사전 인증
   static Future<void> ensureAnonymousAuth() async {
     if (FirebaseAuth.instance.currentUser == null) {
       await FirebaseAuth.instance.signInAnonymously();
@@ -46,15 +51,27 @@ class FortuneService {
   static Future<FortuneResult> _callDailyFortune() async {
     try {
       await ensureAnonymousAuth().timeout(const Duration(seconds: 10));
-      final callable =
-          FirebaseFunctions.instanceFor(region: 'asia-northeast3').httpsCallable(
-        'getDailyFortune',
-        options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
-      );
-      final response = await callable.call();
-      final fortune = (response.data['fortune'] as String).trim();
-      final cached = response.data['cached'] as bool? ?? false;
-      return FortuneResult(fortune: fortune, cached: cached);
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      // ignore: avoid_print
+      print('Fortune calling uid=$uid url=$_functionUrl');
+
+      final response = await http
+          .post(
+            Uri.parse(_functionUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'uid': uid}),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      // ignore: avoid_print
+      print('Fortune status=${response.statusCode} body=${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final fortune = (data['fortune'] as String).trim();
+        final cached = data['cached'] as bool? ?? false;
+        return FortuneResult(fortune: fortune, cached: cached);
+      }
     } catch (e) {
       // ignore: avoid_print
       print('Fortune error: $e');
