@@ -63,11 +63,12 @@ class FortuneService {
           )
           .timeout(const Duration(seconds: 20));
 
+      final decodedBody = utf8.decode(response.bodyBytes);
       // ignore: avoid_print
-      print('Fortune status=${response.statusCode} body=${response.body}');
+      print('Fortune status=${response.statusCode} body=$decodedBody');
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = jsonDecode(decodedBody) as Map<String, dynamic>;
         final fortune = (data['fortune'] as String).trim();
         final cached = data['cached'] as bool? ?? false;
         return FortuneResult(fortune: fortune, cached: cached);
